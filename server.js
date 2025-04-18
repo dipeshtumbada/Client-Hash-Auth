@@ -15,11 +15,14 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => console.log("✅ Connected to MongoDB"))
-  .catch(err => console.error("❌ MongoDB connection error:", err));
+mongoose.connect(process.env.MONGO_URI, {}).then(async () => {
+  console.log("✅ Connected to MongoDB");
+
+  // 👉 Run once on server start in case the hash for today is missing
+  await generateTodayHashesForAllClients();
+
+}).catch(err => console.error("❌ MongoDB connection error:", err));
+
 
 // Helper functions
 function generateKey(clientName, startDate, endDate, cin) {
@@ -138,6 +141,24 @@ app.post('/verifyHash', async (req, res) => {
   }
 });
 
+async function generateTodayHashesForAllClients() {
+  const today = new Date().toISOString().slice(0, 10);
+  const clients = await Hash.find({ locked: false });
+
+  for (const client of clients) {
+    const key = generateKey(client.clientName, client.startDate, client.endDate, client.cin);
+    const dailyHash = generateDailyHash(key);
+
+    const alreadyExists = client.hashes.find(h => h.date === today);
+    if (!alreadyExists) {
+      client.hashes.push({ date: today, hash: dailyHash });
+      await client.save();
+      console.log(`✅ Today's hash generated for ${client.clientName}`);
+    }
+  }
+}
+
+
 // Manually trigger today's hash generation for all clients
 app.post('/generateTodayHashes', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
@@ -163,6 +184,7 @@ app.post('/generateTodayHashes', async (req, res) => {
 
 // cron.schedule('*/2 * * * *', async () => {
 //   console.log('🕵️‍♂️ Running ping and lock check every 2 minutes...');
+//   await generateTodayHashesForAllClients();
 
 //   const now = new Date();
 //   const twoMinutesAgo = new Date(now);
@@ -195,6 +217,7 @@ app.post('/generateTodayHashes', async (req, res) => {
 
 cron.schedule('0 0 * * *', async () => {
   console.log('🕵️‍♂️ Running inactivity check at midnight...');
+  await generateTodayHashesForAllClients();
 
   const now = new Date();
   const twoDaysAgo = new Date(now);
